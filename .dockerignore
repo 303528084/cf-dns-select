@@ -1,0 +1,9 @@
+# .dockerignore
+.git
+data/
+*.md
+!README.md
+result.csv
+config.json
+# 前端构建依赖（Docker 内另行 npm ci）
+web/ui/node_modules

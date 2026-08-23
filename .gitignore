@@ -1,0 +1,12 @@
+dist
+Releases
+*.exe
+*.csv
+
+# cf-dns-select 运行时产物
+data/
+config.json
+.DS_Store
+
+# 前端
+web/ui/node_modules/

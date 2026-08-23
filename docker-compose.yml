@@ -1,0 +1,29 @@
+services:
+  cf-dns-select:
+    image: ghcr.io/neon9809/cf-dns-select:v0.1.0   # 官方多架构镜像（amd64/arm64）
+    # 若 GitHub 包仓库为私有，先登录后再启动：
+    #   docker login ghcr.io -u <你的用户名>
+    container_name: cf-dns-select
+    restart: unless-stopped
+    # 使用宿主机网络：容器直接继承宿主的 IPv4/IPv6 路由（IPv6 测速需要）。
+    # 仅 Linux 主机有效；在 macOS/Windows 上部署请删除本行并恢复 ports 映射。
+    network_mode: host
+    # ports:                    # host 模式下无需端口映射，服务直接监听宿主 8080
+    #   - "8080:8080"           # Dashboard（建议置于反代之后或仅绑定内网）
+    environment:
+      # 【必填·安全门禁】允许访问 Dashboard 的来源网段，未配置时容器拒绝启动。
+      # 多个网段用英文逗号分隔。请按你的局域网实际网段修改！
+      DSA_ALLOWED_CIDRS: "192.168.0.0/23"
+      # 【可选】显式指定 Dashboard 登录密码；不设置则每次启动随机生成并打印到容器日志
+      # DSA_PASSWORD: "your-strong-password"
+      # 【可选】Dashboard 监听地址
+      # DSA_LISTEN: 0.0.0.0:8080
+      # 【可选】地区库持久化路径（写入挂载卷内，容器重建不丢学习成果）
+      DSA_COLO_IP_DB: /app/data/colo_ip_db.json
+      # 【可选】置于 TLS 反代之后时设为 1，会话 cookie 将携带 Secure 标志
+      # DSA_SECURE_COOKIES: "1"
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/app/data     # 配置持久化（config.json）
+      # 注意：宿主目录属主需与容器用户 uid 匹配，否则配置无法保存：
+      #   sudo chown -R 1000:1000 ./data
