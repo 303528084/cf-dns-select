@@ -92,6 +92,40 @@ docker logs cf-dns-select | grep -A 3 "随机"
 | `DSA_COLO_IP_DB` | 跟随 IP 段文件目录 | IP→地区 学习库路径；Docker 部署建议设为 `/app/data/colo_ip_db.json` 以随数据卷持久化 |
 | `DSA_SECURE_COOKIES` | 关 | 置 `1` 后会话 cookie 携带 `Secure` 标志；**置于 HTTPS 反向代理之后时必须开启**，否则 cookie 明文传输 |
 
+## 支持的 DNS 实例类型
+
+实例管理支持多种 DNS 产品，添加实例时选择对应类型即可：
+
+| 类型 | 接入方式 | 生效方式 | 说明 |
+|---|---|---|---|
+| **AdGuard Home**（默认） | HTTP API（地址 + 用户名/密码） | 动态生效 | 同步时接管整张重写表：清空后整表重发 |
+| **Technitium DNS** | HTTP API（地址 + API Token） | 动态生效，无需重启 | 在指定 zone 下维护 A 记录，差集收敛；zone 可用 `地址?zone=xxx` 指定，缺省取主机名末两段 |
+| **dnsmasq** | 受管 hosts 文件 | `hostsdir` 自动热读入，无需重启 | 写独立 hosts 文件并挂载进本容器 |
+| **SmartDNS** | 受管 `conf-file` 规则文件 | 建议配置加载命令（如 `systemctl restart smartdns`） | 每域名一条 `address /domain/ip` |
+| **MosDNS** | 受管 `hosts` 插件规则文件 | 需重启服务（官方无热重载） | 「域名 IP」格式的外部规则文件 |
+
+### 文件型实例（dnsmasq / SmartDNS / MosDNS）配置要点
+
+1. **受管文件路径必须是本工具容器的绝对路径**——请把目标目录挂载进容器：
+   ```yaml
+   volumes:
+     - ./data:/app/data
+     - /etc/dnsmasq.d:/etc/dnsmasq.d   # 例：dnsmasq 受管文件所在目录
+   ```
+2. dnsmasq 侧把该文件纳入 hosts 来源（`addn-hosts=` 或以 `hostsdir` 方式运行），即可自动热读入；
+3. SmartDNS 在主配置加 `conf-file=/path/to/rules.conf`；MosDNS 在 `hosts` 插件的 `files` 中引用该文件；
+4. 受管文件由本工具全权生成（带自动生成头注释），**请勿手工编辑**；你自己的其他规则放在别的文件里不受影响。
+
+### SmartDNS / dnsmasq / MosDNS / Technitium 计划支持
+
+以上四类均已实现（见上表）。当前边界与后续计划：
+
+- **Technitium**：已支持 A 记录差集收敛；CNAME/AAAA 等记录类型、多 zone 自动发现暂未覆盖
+- **dnsmasq**：已支持受管 hosts 文件；`--host-record`/`--cname` 主配置项与 DBus 不在接管范围
+- **SmartDNS**：已支持 `address` 覆写；`cname`、`domain-set`、`domain-rules` 高级用法暂未覆盖
+- **MosDNS**：已支持 `hosts` 插件外部文件；`redirect`/`arbitrary` 插件暂未覆盖
+- **远程主机写入**（SSH/SFTP）：暂不支持；文件型要求规则文件可被本容器直接读写（挂载卷）
+
 ## 安全模型说明
 
 - **CIDR 白名单只保护 API 接口**：静态页面与 `/api/health`（仅返回存活状态）对白名单外来源开放。这是有意设计——健康检查供容器/负载均衡探测使用；静态页不含任何数据（数据全部经鉴权 API 加载）。若需完全封锁，请在防火墙层面限制端口。
