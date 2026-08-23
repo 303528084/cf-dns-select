@@ -28,7 +28,7 @@ type technitiumClient struct {
 // inst.URL 形如 http://192.168.1.2:5380（可选 ?zone=xxx 指定承载 zone）；
 // inst.Password 存放 API Token。
 func NewTechnitium(inst config.AdguardInstance) Provider {
-	u := strings.TrimRight(inst.URL, "/")
+	u := normalizeAPIURL(inst.URL)
 	zone := ""
 	if i := strings.Index(u, "?zone="); i >= 0 {
 		zone = strings.TrimSpace(u[i+len("?zone="):])

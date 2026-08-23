@@ -45,11 +45,20 @@ type adguardClient struct {
 // NewAdGuard 创建 AdGuard Home provider。
 func NewAdGuard(inst config.AdguardInstance) Provider {
 	return &adguardClient{
-		url:      strings.TrimRight(inst.URL, "/"),
+		url:      normalizeAPIURL(inst.URL),
 		username: inst.Username,
 		password: inst.Password,
 		http:     &http.Client{Timeout: 15 * time.Second},
 	}
+}
+
+// normalizeAPIURL 规范化 API 地址：trim + 去尾部斜杠；缺协议头时自动补 http://。
+func normalizeAPIURL(url string) string {
+	url = strings.TrimRight(strings.TrimSpace(url), "/")
+	if url != "" && !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		url = "http://" + url
+	}
+	return url
 }
 
 func (c *adguardClient) Name() string { return "adguard" }
