@@ -226,38 +226,43 @@ export default function InstancesPage() {
       </div>
 
       <div className="seg">
-        <button className={pane === 'adguard' ? 'active' : ''} onClick={() => setPane('adguard')}>AdGuard</button>
+        {PROVIDER_TYPES.map(t => (
+          <button
+            key={t.value}
+            className={pane === t.value ? 'active' : ''}
+            onClick={() => {
+              setPane(t.value);
+              setForm(f => ({ ...f, type: t.value }));
+              resetInstanceTest();
+            }}
+          >
+            {t.label.split('（')[0]}
+          </button>
+        ))}
       </div>
 
-      <div className={'seg-pane' + (pane === 'adguard' ? ' active' : '')}>
+      <div className={'seg-pane' + (pane === form.type ? ' active' : '')}>
         <div className="card">
-          <h2>添加 DNS 实例</h2>
-          <div className="card-sub">API 型在线管理记录；文件型写入受管规则文件（需挂载到本容器）</div>
-          <div className="row2">
-            <div>
-              <label className="field-label">实例类型</label>
-              <select
-                value={form.type}
-                onChange={e => { onFormInput('type', e.target.value); }}
-                style={{ width: '100%', padding: '9px 12px', borderRadius: 10, border: '1px solid var(--separator)', background: 'var(--bg)', color: 'var(--text)', font: 'inherit', fontSize: 14 }}
-              >
-                {PROVIDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
-            </div>
-            <div><label className="field-label">实例名称</label><input type="text" placeholder="如：主力 DNS 服务" value={form.name} onChange={e => onFormInput('name', e.target.value)} /></div>
+          <h2>添加 {PROVIDER_TYPES.find(t => t.value === pane)?.label} 实例</h2>
+          <div className="card-sub">
+            {PROVIDER_TYPES.find(t => t.value === pane)?.api
+              ? 'API 型在线管理记录，变更动态生效'
+              : '文件型：写入受管规则文件（需挂载到本容器）'}
           </div>
-          {PROVIDER_TYPES.find(t => t.value === form.type)?.api ? (
+          <div className="row2">
+            <div><label className="field-label">实例名称</label><input type="text" placeholder="如：主力 DNS 服务" value={form.name} onChange={e => onFormInput('name', e.target.value)} /></div>
+            {PROVIDER_TYPES.find(t => t.value === pane)?.api && (
+              <div><label className="field-label">地址</label><input type="text" placeholder="例如: http://192.168.1.2:3000" value={form.url} onChange={e => onFormInput('url', e.target.value)} /></div>
+            )}
+          </div>
+          {PROVIDER_TYPES.find(t => t.value === pane)?.api ? (
             <>
               <div className="row2">
-                <div><label className="field-label">地址</label><input type="text" placeholder="例如: http://192.168.1.2:3000" value={form.url} onChange={e => onFormInput('url', e.target.value)} /></div>
-                <div><label className="field-label">{form.type === 'technitium' ? 'API Token' : '密码'}</label><input type={form.type === 'technitium' ? 'text' : 'password'} autoComplete="new-password" placeholder={form.type === 'technitium' ? 'Technitium API Token' : '输入密码'} value={form.password} onChange={e => onFormInput('password', e.target.value)} /></div>
-              </div>
-              {form.type === 'adguard' && (
-                <div className="row2">
+                {pane === 'adguard' && (
                   <div><label className="field-label">用户名</label><input type="text" autoComplete="off" placeholder="输入用户名" value={form.username} onChange={e => onFormInput('username', e.target.value)} /></div>
-                  <div></div>
-                </div>
-              )}
+                )}
+                <div><label className="field-label">{pane === 'technitium' ? 'API Token' : '密码'}</label><input type={pane === 'technitium' ? 'text' : 'password'} autoComplete="new-password" placeholder={pane === 'technitium' ? 'Technitium API Token' : '输入密码'} value={form.password} onChange={e => onFormInput('password', e.target.value)} /></div>
+              </div>
             </>
           ) : (
             <>
@@ -278,7 +283,7 @@ export default function InstancesPage() {
         <div className="card">
           <h2>已有实例</h2>
           <div className="card-sub">测试中最快响应的 Cloudflare 节点 IP 将写入以下实例的 DNS 重写表</div>
-          {instances.length ? instances.map(inst => (
+          {instances.filter(i => (i.type || 'adguard') === pane).length ? instances.filter(i => (i.type || 'adguard') === pane).map(inst => (
             <div className="inst-row" key={inst.url}>
               <span className="name">{inst.name}</span>
               <span className="url mono">{inst.url}</span>
@@ -307,7 +312,7 @@ export default function InstancesPage() {
               <button className="btn-danger btn-sm" onClick={() => deleteInstance(inst.url)}>删除</button>
             </div>
           )) : (
-            <span className="hint">尚未添加任何 AdGuard Home 实例</span>
+            <span className="hint">尚未添加任何 {PROVIDER_TYPES.find(t => t.value === pane)?.label} 实例</span>
           )}
 
         </div>
