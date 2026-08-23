@@ -3,9 +3,17 @@ import { api, getToken } from '../api';
 import { toast } from '../Toast';
 import { appAlert, appChoice, appConfirm } from '../AppModal';
 
+const PROVIDER_TYPES = [
+  { value: 'adguard', label: 'AdGuard Home', api: true },
+  { value: 'technitium', label: 'Technitium DNS', api: true },
+  { value: 'dnsmasq', label: 'dnsmasq（hostsdir 文件）', api: false },
+  { value: 'smartdns', label: 'SmartDNS（conf-file 文件）', api: false },
+  { value: 'mosdns', label: 'MosDNS（hosts 规则文件）', api: false },
+];
+
 export default function InstancesPage() {
   const [instances, setInstances] = useState([]);
-  const [form, setForm] = useState({ name: '', url: '', username: '', password: '' });
+  const [form, setForm] = useState({ name: '', type: 'adguard', url: '', username: '', password: '', rules_file: '', reload_cmd: '' });
   const [tested, setTested] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testState, setTestState] = useState({ text: '', color: '' });
@@ -42,13 +50,22 @@ export default function InstancesPage() {
   };
 
   const testInstanceInput = async () => {
-    if (!form.url.trim()) { toast('请先填写实例地址', true); return; }
+    const isAPI = PROVIDER_TYPES.find(t => t.value === form.type)?.api;
+    if (isAPI && !form.url.trim()) { toast('请先填写实例地址', true); return; }
+    if (!isAPI && !form.rules_file.trim()) { toast('请先填写受管规则文件路径', true); return; }
     setTesting(true);
     setTestState({ text: '测试中...', color: '' });
     try {
       const t = await api('/api/test-instance', {
         method: 'POST',
-        body: JSON.stringify({ url: form.url.trim(), username: form.username.trim(), password: form.password }),
+        body: JSON.stringify({
+          type: form.type,
+          url: form.url.trim(),
+          username: form.username.trim(),
+          password: form.password,
+          rules_file: form.rules_file.trim(),
+          reload_cmd: form.reload_cmd,
+        }),
       });
       if (t.ok) {
         setTested(true);
@@ -69,9 +86,12 @@ export default function InstancesPage() {
     if (!tested && !adopt) { toast('请先通过测试连接', true); return; }
     const body = {
       name: form.name.trim(),
+      type: form.type,
       url: form.url.trim(),
       username: form.username.trim(),
       password: form.password,
+      rules_file: form.rules_file.trim(),
+      reload_cmd: form.reload_cmd,
       adopt,
     };
     if (!body.url) { toast('请填写实例地址', true); return; }
@@ -100,7 +120,7 @@ export default function InstancesPage() {
         return;
       }
       if (!resp.ok) { toast(data.error || ('HTTP ' + resp.status), true); return; }
-      setForm({ name: '', url: '', username: '', password: '' });
+      setForm({ name: '', type: form.type, url: '', username: '', password: '', rules_file: '', reload_cmd: '' });
       resetInstanceTest();
       toast(adopt === 'import'
         ? '实例已保存，现有规则已导入自定义重写表 ✓'
@@ -211,16 +231,43 @@ export default function InstancesPage() {
 
       <div className={'seg-pane' + (pane === 'adguard' ? ' active' : '')}>
         <div className="card">
-          <h2>添加 AdGuard Home 实例</h2>
-          <div className="card-sub">添加时将验证服务器可达性</div>
+          <h2>添加 DNS 实例</h2>
+          <div className="card-sub">API 型在线管理记录；文件型写入受管规则文件（需挂载到本容器）</div>
           <div className="row2">
+            <div>
+              <label className="field-label">实例类型</label>
+              <select
+                value={form.type}
+                onChange={e => { onFormInput('type', e.target.value); }}
+                style={{ width: '100%', padding: '9px 12px', borderRadius: 10, border: '1px solid var(--separator)', background: 'var(--bg)', color: 'var(--text)', font: 'inherit', fontSize: 14 }}
+              >
+                {PROVIDER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
             <div><label className="field-label">实例名称</label><input type="text" placeholder="如：主力 DNS 服务" value={form.name} onChange={e => onFormInput('name', e.target.value)} /></div>
-            <div><label className="field-label">地址</label><input type="text" placeholder="例如: 192.168.1.2:15555 请使用实际端口号" value={form.url} onChange={e => onFormInput('url', e.target.value)} /></div>
           </div>
-          <div className="row2">
-            <div><label className="field-label">用户名</label><input type="text" autoComplete="off" placeholder="输入用户名" value={form.username} onChange={e => onFormInput('username', e.target.value)} /></div>
-            <div><label className="field-label">密码</label><input type="password" autoComplete="new-password" placeholder="输入密码" value={form.password} onChange={e => onFormInput('password', e.target.value)} /></div>
-          </div>
+          {PROVIDER_TYPES.find(t => t.value === form.type)?.api ? (
+            <>
+              <div className="row2">
+                <div><label className="field-label">地址</label><input type="text" placeholder="例如: http://192.168.1.2:3000" value={form.url} onChange={e => onFormInput('url', e.target.value)} /></div>
+                <div><label className="field-label">{form.type === 'technitium' ? 'API Token' : '密码'}</label><input type={form.type === 'technitium' ? 'text' : 'password'} autoComplete="new-password" placeholder={form.type === 'technitium' ? 'Technitium API Token' : '输入密码'} value={form.password} onChange={e => onFormInput('password', e.target.value)} /></div>
+              </div>
+              {form.type === 'adguard' && (
+                <div className="row2">
+                  <div><label className="field-label">用户名</label><input type="text" autoComplete="off" placeholder="输入用户名" value={form.username} onChange={e => onFormInput('username', e.target.value)} /></div>
+                  <div></div>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="row2">
+                <div><label className="field-label">受管规则文件路径（容器内绝对路径）</label><input type="text" placeholder="/etc/dnsmasq.d/cf-dns-select.hosts" value={form.rules_file} onChange={e => onFormInput('rules_file', e.target.value)} /></div>
+                <div><label className="field-label">加载命令（可选，规则写入后执行）</label><input type="text" placeholder="如：systemctl restart smartdns" value={form.reload_cmd} onChange={e => onFormInput('reload_cmd', e.target.value)} /></div>
+              </div>
+              <div className="hint">请把该路径所在目录挂载进本容器（volumes）。dnsmasq 的 hostsdir 会自动热读入；SmartDNS/MosDNS 建议配置重启命令。</div>
+            </>
+          )}
           <div className="actions">
             <button className="btn-ghost" disabled={testing} onClick={testInstanceInput}>测试连接</button>
             <button className="btn-primary" disabled={!tested} onClick={() => addInstance()}>添加实例</button>

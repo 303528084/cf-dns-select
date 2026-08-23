@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/neon9809/cf-dns-select/adguard"
 	"github.com/neon9809/cf-dns-select/config"
+	"github.com/neon9809/cf-dns-select/dns"
 	"github.com/neon9809/cf-dns-select/speedtest"
 )
 
@@ -406,8 +406,8 @@ func (s *Server) handleDomainWildcard(w http.ResponseWriter, r *http.Request) {
 			if len(want) == 0 {
 				continue
 			}
-			client := adguard.New(inst.URL, inst.Username, inst.Password)
-			if _, err := client.SyncRewrites(want); err != nil {
+			client := s.providerFor(inst)
+			if _, err := client.ReplaceRewrites(want); err != nil {
 				log.Printf("[错误] [%s] 更新域名形式失败: %v", inst.Name, err)
 			}
 		}
@@ -674,7 +674,7 @@ func (s *Server) handleInstances(w http.ResponseWriter, r *http.Request) {
 		// 接管协商：本工具会接管整张重写表，实例上已有规则时需用户确认处置方式。
 		// P1-3：网络探测在锁外执行，避免不可达实例（3 次重试 × 15s 超时）
 		// 使全局互斥锁冻结整个 Dashboard。
-		client := adguard.New(in.URL, in.Username, in.Password)
+		client := s.providerFor(in)
 		list, listErr := client.ListRewrites()
 
 		switch in.Adopt {
@@ -842,14 +842,24 @@ func (s *Server) writeCurrentBestToInstance(inst config.AdguardInstance) {
 		ip = lastIP // 重启后无内存结果时回退持久化的最近结果
 	}
 	// 接管语义：无论 want 是否为空都执行整表重发（空表 = 清空实例现有规则）
-	client := adguard.New(inst.URL, inst.Username, inst.Password)
-	_, err := client.SyncRewrites(wantForInstance(domains, ip, inst))
+	client := s.providerFor(inst)
+	_, err := client.ReplaceRewrites(wantForInstance(domains, ip, inst))
 	if err != nil {
 		log.Printf("[错误] [%s] 初始化写入失败: %v", inst.Name, err)
 		return
 	}
 	fmt.Printf("[%s] 新实例 %s 初始化写入完成：%s → %d 个域名\n",
 		time.Now().Format("2006-01-02 15:04:05"), inst.Name, ip, len(domains))
+}
+
+// providerFor 构造指定实例的 DNS Provider；未知类型回退 AdGuard（兼容旧配置）。
+func (s *Server) providerFor(inst config.AdguardInstance) dns.Provider {
+	p, err := dns.New(inst)
+	if err != nil {
+		log.Printf("[警告] 实例 %s 类型 %q 未知，按 AdGuard 处理", inst.Name, inst.Type)
+		return dns.NewAdGuard(inst)
+	}
+	return p
 }
 
 // instances 返回实例快照（调用方需持锁或接受快照语义）。
@@ -886,7 +896,7 @@ func (s *Server) expectedRewritesFor(inst config.AdguardInstance) (map[string]ma
 
 // diffInstance 对比实例上的重写与期望集合，返回差异明细：
 // 缺失的（期望有但实例没有或指向旧 IP）、多余的（实例有但不在期望内且属于我们管理的域名）。
-func diffInstance(list []adguard.RewriteEntry, want map[string]map[string]bool) []string {
+func diffInstance(list []dns.RewriteEntry, want map[string]map[string]bool) []string {
 	var drift []string
 	actual := make(map[string]map[string]bool)
 	for _, ent := range list {
@@ -925,7 +935,7 @@ func (s *Server) writeInstanceList(w http.ResponseWriter) {
 		go func(i config.AdguardInstance) {
 			defer wg.Done()
 			st := InstanceStatus{Name: i.Name, URL: i.URL}
-			c := adguard.New(i.URL, i.Username, i.Password)
+			c := s.providerFor(i)
 			list, err := c.ListRewrites()
 			if err != nil {
 				st.Error = err.Error()
@@ -1041,8 +1051,8 @@ func (s *Server) runSync(targets []config.AdguardInstance) []syncResult {
 				mu.Unlock()
 				return
 			}
-			client := adguard.New(i.URL, i.Username, i.Password)
-			stats, err := client.SyncRewrites(want)
+			client := s.providerFor(i)
+			stats, err := client.ReplaceRewrites(want)
 			if err != nil {
 				log.Printf("[错误] [%s] 同步失败: %v", i.Name, err)
 				res.Error = err.Error()
@@ -1082,8 +1092,15 @@ func (s *Server) handleTestInstance(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	c := adguard.New(normalizeInstanceURL(in.URL), in.Username, in.Password)
-	if _, err := c.ListRewrites(); err != nil {
+	if in.Type == "" {
+		in.Type = "adguard"
+	}
+	c, err := dns.New(in)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := c.TestConnection(); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -1105,7 +1122,7 @@ func (s *Server) handleRewrites(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "未找到指定实例"})
 		return
 	}
-	c := adguard.New(chosen.URL, chosen.Username, chosen.Password)
+	c := s.providerFor(*chosen)
 	list, err := c.ListRewrites()
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
@@ -1276,8 +1293,8 @@ func (s *Server) syncInstanceBackground(inst config.AdguardInstance) {
 		if ip == "" {
 			ip = lastIP // 重启后无内存结果时回退持久化的最近结果
 		}
-		client := adguard.New(inst.URL, inst.Username, inst.Password)
-		if _, err := client.SyncRewrites(wantForInstance(domains, ip, inst)); err != nil {
+		client := s.providerFor(inst)
+		if _, err := client.ReplaceRewrites(wantForInstance(domains, ip, inst)); err != nil {
 			log.Printf("[错误] [%s] 手动规则同步失败: %v", inst.Name, err)
 		} else {
 			fmt.Printf("[%s] [%s] 重写表已同步（含手动规则）\n", time.Now().Format("2006-01-02 15:04:05"), inst.Name)
@@ -1436,8 +1453,8 @@ func (s *Server) runOnce(trigger string) {
 	for _, inst := range cfg.AdguardInstances {
 		onProgress(speedtest.Progress{Phase: "writing", PhaseLabel: "写入 AdGuard 重写规则",
 			Current: writeDone, Total: writeTotal, Detail: fmt.Sprintf("实例 %s", inst.Name)})
-		client := adguard.New(inst.URL, inst.Username, inst.Password)
-		stats, err := client.SyncRewrites(wantForInstance(domains, bestIP, inst))
+		client := s.providerFor(inst)
+		stats, err := client.ReplaceRewrites(wantForInstance(domains, bestIP, inst))
 		if err != nil {
 			fmt.Printf("[%s] [%s] 写入重写失败: %v\n", now, inst.Name, err)
 			st.WrittenDomains = append(st.WrittenDomains, WrittenDomain{
@@ -1557,8 +1574,8 @@ func (s *Server) writeIPToInstances(ip string) bool {
 	}
 	okAll := true
 	for _, inst := range s.instances() {
-		client := adguard.New(inst.URL, inst.Username, inst.Password)
-		if _, err := client.SyncRewrites(wantForInstance(domains, ip, inst)); err != nil {
+		client := s.providerFor(inst)
+		if _, err := client.ReplaceRewrites(wantForInstance(domains, ip, inst)); err != nil {
 			log.Printf("[错误] [守护] [%s] 轮换写入 %s 失败: %v", inst.Name, ip, err)
 			okAll = false
 		}
@@ -1574,7 +1591,8 @@ func (s *Server) managedDomains() []string {
 }
 
 // removeDomainFromInstances 后台删除某域名（含 *. 通配形式）在全部实例上的重写记录。
-// 域名从配置移除后不再参与 SyncRewrites 差集清理，必须在此显式清除，避免残留。
+// 域名从配置移除后不再参与整表收敛，必须在此显式清除，避免残留：
+// 以「仅含该域名空集」的期望集合整表重发，各 provider 按自身语义清除对应记录。
 func (s *Server) removeDomainFromInstances(domain string) {
 	insts := s.instances()
 	if len(insts) == 0 {
@@ -1582,11 +1600,13 @@ func (s *Server) removeDomainFromInstances(domain string) {
 	}
 	go func() {
 		for _, inst := range insts {
-			client := adguard.New(inst.URL, inst.Username, inst.Password)
-			for _, t := range []string{domain, "*." + domain} {
-				if err := client.RemoveRewrite(t); err != nil {
-					log.Printf("[错误] [%s] 删除域名 %s 的重写记录失败: %v", inst.Name, t, err)
-				}
+			client := s.providerFor(inst)
+			want := map[string]map[string]bool{
+				domain:        {},
+				"*." + domain: {},
+			}
+			if _, err := client.ReplaceRewrites(want); err != nil {
+				log.Printf("[错误] [%s] 删除域名 %s 的重写记录失败: %v", inst.Name, domain, err)
 			}
 		}
 		fmt.Printf("[%s] 已从 %d 个实例清理域名 %s 的重写记录\n",

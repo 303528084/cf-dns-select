@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neon9809/cf-dns-select/adguard"
 	"github.com/neon9809/cf-dns-select/config"
+	"github.com/neon9809/cf-dns-select/dns"
 	"github.com/neon9809/cf-dns-select/speedtest"
 )
 
@@ -171,7 +171,7 @@ func TestWatchdogProbeAndRotate(t *testing.T) {
 // SyncRewrites 清空重发语义验证（httptest 模拟 AdGuard API）。
 func TestSyncRewritesWipeAndRewrite(t *testing.T) {
 	var mu sync.Mutex
-	existing := map[string]adguard.RewriteEntry{
+	existing := map[string]dns.RewriteEntry{
 		"a.example.com|1.1.1.1":     {Domain: "a.example.com", Answer: "1.1.1.1", Enabled: true},
 		"b.example.com|9.9.9.9":     {Domain: "b.example.com", Answer: "9.9.9.9", Enabled: true},
 		"other.example.com|8.8.8.8": {Domain: "other.example.com", Answer: "8.8.8.8", Enabled: true}, // 非托管规则，也应被清空
@@ -181,7 +181,7 @@ func TestSyncRewritesWipeAndRewrite(t *testing.T) {
 	mux := http.NewServeMux()
 	handleList := func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		list := make([]adguard.RewriteEntry, 0, len(existing))
+		list := make([]dns.RewriteEntry, 0, len(existing))
 		for _, e := range existing {
 			list = append(list, e)
 		}
@@ -191,7 +191,7 @@ func TestSyncRewritesWipeAndRewrite(t *testing.T) {
 	}
 	mux.HandleFunc("/control/rewrite/list", handleList)
 	mux.HandleFunc("/control/rewrite/add", func(w http.ResponseWriter, r *http.Request) {
-		var ent adguard.RewriteEntry
+		var ent dns.RewriteEntry
 		decodeBody(r, &ent)
 		mu.Lock()
 		existing[ent.Domain+"|"+ent.Answer] = ent
@@ -200,7 +200,7 @@ func TestSyncRewritesWipeAndRewrite(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/control/rewrite/delete", func(w http.ResponseWriter, r *http.Request) {
-		var ent adguard.RewriteEntry
+		var ent dns.RewriteEntry
 		decodeBody(r, &ent)
 		mu.Lock()
 		delete(existing, ent.Domain+"|"+ent.Answer)
@@ -212,12 +212,12 @@ func TestSyncRewritesWipeAndRewrite(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := adguard.New(srv.URL, "", "")
+	client := dns.NewAdGuard(config.AdguardInstance{URL: srv.URL})
 	want := map[string]map[string]bool{
 		"a.example.com": {"1.1.1.1": true, "2.2.2.2": true},
 		"b.example.com": {"3.3.3.3": true},
 	}
-	stats, err := client.SyncRewrites(want)
+	stats, err := client.ReplaceRewrites(want)
 	if err != nil {
 		t.Fatal(err)
 	}

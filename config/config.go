@@ -8,12 +8,18 @@ import (
 	"time"
 )
 
-// AdguardInstance 描述一个 AdGuard Home 实例（支持多实例同步写入，互为备份）。
+// AdguardInstance 描述一个 DNS 实例（支持多实例同步写入，互为备份）。
+// 字段名保留 AdguardInstance 以兼容旧配置文件；Type 区分具体产品。
 type AdguardInstance struct {
-	Name     string `json:"name"`     // 实例名称（自定义，如 "主"、"备"）
-	URL      string `json:"url"`      // 例如 http://192.168.1.2:3000
-	Username string `json:"username"` // 用户名
-	Password string `json:"password"` // 密码
+	Name     string `json:"name"`           // 实例名称（自定义，如 "主"、"备"）
+	Type     string `json:"type,omitempty"` // 实例类型：adguard（默认）/ technitium / dnsmasq / smartdns / mosdns
+	URL      string `json:"url"`            // API 型：例如 http://192.168.1.2:3000；文件型：留空或备注
+	Username string `json:"username"`       // 用户名
+	Password string `json:"password"`       // 密码 / API Token
+
+	// 文件型实例（dnsmasq/smartdns/mosdns）专用：
+	RulesFile string `json:"rules_file,omitempty"` // 受管规则文件绝对路径
+	ReloadCmd string `json:"reload_cmd,omitempty"` // 规则写入后执行的加载命令（可选，如重启服务）
 
 	// 该实例独有的手动重写规则（非 Cloudflare 域名），同步时与最优 IP 重写合并整表下发
 	ManualRewrites []ManualRewrite `json:"manual_rewrites,omitempty"`
