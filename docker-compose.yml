@@ -1,8 +1,6 @@
 services:
   cf-dns-select:
-    image: ghcr.io/neon9809/cf-dns-select:v0.1.0   # 官方多架构镜像（amd64/arm64）
-    # 若 GitHub 包仓库为私有，先登录后再启动：
-    #   docker login ghcr.io -u <你的用户名>
+    image: ghcr.io/neon9809/cf-dns-select:v0.2.0   # 官方多架构镜像（amd64/arm64）
     container_name: cf-dns-select
     restart: unless-stopped
     # 使用宿主机网络：容器直接继承宿主的 IPv4/IPv6 路由（IPv6 测速需要）。
