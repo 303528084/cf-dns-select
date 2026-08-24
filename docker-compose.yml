@@ -3,18 +3,31 @@ services:
     image: ghcr.io/neon9809/cf-dns-select:latest   # 官方多架构镜像（amd64/arm64）
     container_name: cf-dns-select
     restart: unless-stopped
-    # 使用宿主机网络：容器直接继承宿主的 IPv4/IPv6 路由（IPv6 测速需要）。
-    # 仅 Linux 主机有效；在 macOS/Windows 上部署请删除本行并恢复 ports 映射。
+
+    # ===================== 网络模式（二选一）=====================
+    # 【host 模式（默认）】容器直接使用宿主机网络栈：
+    #   · 获得真实 IPv4 + IPv6 测速环境（本应用核心能力）
+    #   · Dashboard 直接监听宿主机端口，端口由环境变量 DSA_LISTEN 决定
+    #   · 仅 Linux 主机有效；macOS/Windows 请改用下方端口映射模式
+    #
+    # 【端口映射（bridge）模式】容器内固定监听 8080，经 ports 映射到宿主机：
+    #   · 兼容 macOS/Windows
+    #   · 受 NAT 限制，IPv6 测速不可用
+    #   · 改对外端口只需改 ports 左侧（如 "8765:8080"），容器内保持 8080
+    #
+    # 切换方法：删除 network_mode: host 一行，并取消注释下面的 ports。
     network_mode: host
-    # ports:                    # host 模式下无需端口映射，服务直接监听宿主 8080
-    #   - "8080:8080"           # Dashboard（建议置于反代之后或仅绑定内网）
+    # ports:
+    #   - "8080:8080"           # 宿主机端口:容器内端口（右侧容器内端口固定 8080）
     environment:
       # 【必填·安全门禁】允许访问 Dashboard 的来源网段，未配置时容器拒绝启动。
       # 多个网段用英文逗号分隔。请按你的局域网实际网段修改！
       DSA_ALLOWED_CIDRS: "192.168.0.0/23"
       # 【可选】显式指定 Dashboard 登录密码；不设置则每次启动随机生成并打印到容器日志
       # DSA_PASSWORD: "your-strong-password"
-      # 【可选】Dashboard 监听地址
+      # 【可选】Dashboard 监听地址。host 模式下改端口就改这里，例如 0.0.0.0:8765；
+      # 未设置时默认 0.0.0.0:8080，健康检查会自动跟随无需其他配置。
+      # 端口映射（bridge）模式下请保持默认，改对外端口用上面 ports 左侧。
       # DSA_LISTEN: 0.0.0.0:8080
       # 【可选】地区库持久化路径（写入挂载卷内，容器重建不丢学习成果）
       DSA_COLO_IP_DB: /app/data/colo_ip_db.json

@@ -56,34 +56,38 @@ port_busy() {
     return 0
 }
 
-# ------------------------------------------- 生成主副本（升级时保留旧配置）
-if [ ! -f "$MASTER_DEPLOY" ]; then
-    mkdir -p "$(dirname "$MASTER_DEPLOY")"
-    {
-        echo "NET_MODE=$MODE"
-        echo "BIND_PORT=$PORT"
-    } > "$MASTER_DEPLOY"
-    chmod 600 "$MASTER_DEPLOY"
+# ------------------------------------------- 生成主副本（向导值无条件写入）
+# 安装回调只在全新安装时执行；应用中心可能已在本回调前用随包默认参数
+# 拉起过容器并生成过默认主副本，因此这里必须无条件以向导值重写，
+# 否则默认值会被固化，向导端口失效。
+mkdir -p "$(dirname "$MASTER_DEPLOY")"
 
-    # 首次安装：此刻本应用尚未运行，若端口仍可连通说明被其他服务占用
-    if port_busy "$PORT"; then
-        rm -f "$MASTER_DEPLOY"
-        fail "端口 $PORT 已被其他服务占用，请回到安装向导更换端口后重试。" \
-             "可先执行 ss -lntp | grep :$PORT 查看占用进程。"
-    fi
+# 首次安装：此刻本应用尚未运行，若端口仍可连通说明被其他服务占用
+if [ ! -f "$MASTER_DEPLOY" ] && port_busy "$PORT"; then
+    fail "端口 $PORT 已被其他服务占用，请回到安装向导更换端口后重试。" \
+         "可先执行 ss -lntp | grep :$PORT 查看占用进程。"
 fi
 
-if [ ! -f "$MASTER_ENV" ]; then
-    mkdir -p "$(dirname "$MASTER_ENV")"
-    {
-        echo "DSA_ALLOWED_CIDRS=${wizard_allowed_cidrs:-$DEFAULT_CIDRS}"
+{
+    echo "NET_MODE=$MODE"
+    echo "BIND_PORT=$PORT"
+} > "$MASTER_DEPLOY"
+chmod 600 "$MASTER_DEPLOY"
+
+mkdir -p "$(dirname "$MASTER_ENV")"
+{
+    echo "DSA_ALLOWED_CIDRS=${wizard_allowed_cidrs:-$DEFAULT_CIDRS}"
+    if [ "$MODE" = "bridge" ]; then
+        # bridge 模式下容器内固定监听 8080，宿主端口由 .env 的 BIND_PORT 映射
+        echo "DSA_LISTEN=0.0.0.0:8080"
+    else
         echo "DSA_LISTEN=0.0.0.0:$PORT"
-        echo "TZ=${wizard_tz:-Asia/Shanghai}"
-        [ -n "${wizard_password:-}" ] && echo "DSA_PASSWORD=${wizard_password}"
-        true
-    } > "$MASTER_ENV"
-    chmod 600 "$MASTER_ENV"
-fi
+    fi
+    echo "TZ=${wizard_tz:-Asia/Shanghai}"
+    [ -n "${wizard_password:-}" ] && echo "DSA_PASSWORD=${wizard_password}"
+    true
+} > "$MASTER_ENV"
+chmod 600 "$MASTER_ENV"
 
 # --------------------------------------------------- 同步到 compose 引用路径
 mkdir -p "$(dirname "$TARGET_ENV")"
@@ -99,12 +103,15 @@ BIND_NOW="$(grep -E '^BIND_PORT=' "$MASTER_DEPLOY" | tail -1 | cut -d= -f2)"
 } > "$TARGET_DOTENV"
 chmod 644 "$TARGET_DOTENV"
 
-# --------------------------------------------- 模式不一致时重建容器
-# 应用中心可能在回调前就以默认 host 模式拉起过容器；若用户选择了
-# 端口映射模式，这里删除旧容器并用正确 profile 重新拉起。
+# ------------------------------------------- 确保容器以最新参数运行
+# 应用中心可能在回调前就用随包默认参数（8080）拉起过容器；模式变化需
+# 先删除旧容器（同名 container_name 与不同 profile 冲突），随后统一
+# compose up：env 变化会触发重建，无变化则为 no-op。
 cur_mode="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$CONTAINER" 2>/dev/null | sed -n 's/^DSA_NET_MODE=//p' | head -1)"
 if [ -n "$cur_mode" ] && [ "$cur_mode" != "$MODE_NOW" ]; then
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+fi
+if docker inspect "$CONTAINER" >/dev/null 2>&1; then
     (cd "${TRIM_APPDEST}/docker" && docker compose up -d) >/dev/null 2>&1 || true
 fi
 
