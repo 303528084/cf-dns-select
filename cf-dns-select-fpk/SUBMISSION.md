@@ -61,7 +61,7 @@ host 网络下应用的可达性边界清晰且默认收敛于局域网。
 
 ## 5.1 镜像版本策略
 
-compose 引用固定版本标签 `ghcr.io/neon9809/cf-dns-select:0.3.2`
+compose 引用固定版本标签 `ghcr.io/neon9809/cf-dns-select:0.3.3`
 （与 manifest.version 一致，不使用 latest）。理由：
 
 - 同一 .fpk 在任何时间安装得到完全相同的镜像，审核可复现、用户可回滚；

@@ -3,10 +3,15 @@
 #   COMPOSE_PROFILES 选择（安装向导同步），同一时刻只会创建其中一个容器，
 #   容器名统一为 cf-dns-select，便于日志查看与状态检查。
 
+# 项目名必须与应用中心 config/resource 声明的 docker-project 名称一致，
+# 否则生命周期脚本里的 docker compose up/down 会作用到错误项目，
+# env 文件更新后容器无法重建（向导端口不生效）。
+name: cf-dns-select
+
 services:
   cf-dns-select:
     profiles: ["host"]
-    image: ghcr.io/neon9809/cf-dns-select:0.3.2
+    image: ghcr.io/neon9809/cf-dns-select:0.3.3
     container_name: cf-dns-select
     restart: unless-stopped
     # host 模式：直接继承宿主网络栈（IPv4/IPv6 测速需要），
@@ -29,7 +34,7 @@ services:
 
   cf-dns-select-bridge:
     profiles: ["bridge"]
-    image: ghcr.io/neon9809/cf-dns-select:0.3.2
+    image: ghcr.io/neon9809/cf-dns-select:0.3.3
     container_name: cf-dns-select
     restart: unless-stopped
     # bridge 模式：端口映射访问；受 NAT 限制，IPv6 测速不可用。
