@@ -10,7 +10,8 @@ services:
     container_name: cf-dns-select
     restart: unless-stopped
     # host 模式：直接继承宿主网络栈（IPv4/IPv6 测速需要），
-    # Dashboard 监听宿主端口 = 向导端口（写入 env/app.env 的 DSA_LISTEN）
+    # Dashboard 监听宿主端口 = 向导端口（写入 env/app.env 的 DSA_LISTEN）。
+    # 注意：ports 映射对 host 模式无效，改端口请改 env_file 中的 DSA_LISTEN。
     network_mode: host
     env_file:
       - ${TRIM_APPDEST}/docker/env/app.env
