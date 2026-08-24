@@ -78,8 +78,11 @@ reconcile_config() {
     cur_mode="$(echo "$cur_env" | sed -n 's/^DSA_NET_MODE=//p' | head -1)"
     cur_listen="$(echo "$cur_env" | sed -n 's/^DSA_LISTEN=//p' | head -1)"
     if [ "$cur_mode" != "$MODE" ] || [ "${cur_listen:-0.0.0.0:8080}" != "$WANT_LISTEN" ]; then
-        docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-        (cd "${TRIM_APPDEST}/docker" && docker compose up -d) >/dev/null 2>&1 || true
+        LOG="${TRIM_TEMP_LOGFILE:-/dev/null}"
+        docker rm -f "$CONTAINER" >/dev/null 2>>"$LOG" || true
+        if ! (cd "${TRIM_APPDEST}/docker" && docker compose up -d) >>"$LOG" 2>&1; then
+            echo "reconcile_config: docker compose up 失败（见上方输出）" >>"$LOG"
+        fi
     fi
 }
 

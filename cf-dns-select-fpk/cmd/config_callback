@@ -78,8 +78,11 @@ if [ -d "$(dirname "$TARGET_ENV")" ]; then
 fi
 
 # ---------------- 重建容器使新模式 / 新端口生效
-docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-(cd "${TRIM_APPDEST}/docker" && docker compose up -d) >/dev/null 2>&1 \
-    || docker restart "$CONTAINER" >/dev/null 2>&1 || true
+LOG="${TRIM_TEMP_LOGFILE:-/dev/null}"
+docker rm -f "$CONTAINER" >/dev/null 2>>"$LOG" || true
+if ! (cd "${TRIM_APPDEST}/docker" && docker compose up -d) >>"$LOG" 2>&1; then
+    echo "config_callback: docker compose up 失败，尝试 restart（见上方输出）" >>"$LOG"
+    docker restart "$CONTAINER" >/dev/null 2>>"$LOG" || true
+fi
 
 exit 0

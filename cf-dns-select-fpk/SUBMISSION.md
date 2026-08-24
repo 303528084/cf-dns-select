@@ -54,12 +54,14 @@ host 网络下应用的可达性边界清晰且默认收敛于局域网。
 ## 5. 权限模型
 
 - 生命周期脚本以专用包用户上下文运行（`config/privilege`: run-as=package），
-  无特权操作、无远程执行；
+  并通过 `join-groups: ["docker"]` 加入 docker 用户组：这是本应用唯一需要的
+  附加权限，用于在安装/应用设置/启动时重建自身 docker-project 的容器
+  （改端口、切网络模式需要重建才能生效），除此之外无特权操作、无远程执行；
 - 容器内以上游镜像的非 root 用户（uid 1000）运行；
 - 未声明 `data-share`、`usr-local-linker`；数据全部位于应用沙箱目录
   （etc/var），卸载时随沙箱清理。
 
-## 5.1 镜像版本策略
+## 5.1 镜像版本策略4
 
 compose 引用固定版本标签 `ghcr.io/neon9809/cf-dns-select:0.3.3`
 （与 manifest.version 一致，不使用 latest）。理由：

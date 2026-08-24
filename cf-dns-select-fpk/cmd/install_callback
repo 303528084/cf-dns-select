@@ -107,12 +107,15 @@ chmod 644 "$TARGET_DOTENV"
 # 应用中心可能在回调前就用随包默认参数（8080）拉起过容器；模式变化需
 # 先删除旧容器（同名 container_name 与不同 profile 冲突），随后统一
 # compose up：env 变化会触发重建，无变化则为 no-op。
+LOG="${TRIM_TEMP_LOGFILE:-/dev/null}"
 cur_mode="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$CONTAINER" 2>/dev/null | sed -n 's/^DSA_NET_MODE=//p' | head -1)"
 if [ -n "$cur_mode" ] && [ "$cur_mode" != "$MODE_NOW" ]; then
-    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    docker rm -f "$CONTAINER" >/dev/null 2>>"$LOG" || true
 fi
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
-    (cd "${TRIM_APPDEST}/docker" && docker compose up -d) >/dev/null 2>&1 || true
+    if ! (cd "${TRIM_APPDEST}/docker" && docker compose up -d) >>"$LOG" 2>&1; then
+        echo "install_callback: docker compose up 失败（见上方输出）" >>"$LOG"
+    fi
 fi
 
 exit 0
