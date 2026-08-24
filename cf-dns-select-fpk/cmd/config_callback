@@ -1,0 +1,85 @@
+#!/bin/bash
+# 用户在「应用设置」中修改向导配置后执行：
+# 用新的向导值重写部署主副本（deploy.conf）与运行参数主副本（app.env），
+# 同步到 compose 引用的包内文件，并重建容器使其生效。
+# 密码/端口/模式留空或非法时保留旧值（避免误清除）。
+
+set -e
+
+CONTAINER="cf-dns-select"
+MASTER_ENV="${TRIM_PKGETC}/app.env"
+MASTER_DEPLOY="${TRIM_PKGETC}/deploy.conf"
+TARGET_ENV="${TRIM_APPDEST}/docker/env/app.env"
+TARGET_DOTENV="${TRIM_APPDEST}/docker/.env"
+
+DEFAULT_CIDRS="192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
+
+mkdir -p "$(dirname "$MASTER_ENV")" "$(dirname "$MASTER_DEPLOY")"
+
+# ---------------- 读取旧值兜底
+OLD_PASSWORD=""
+OLD_PORT="8080"
+if [ -f "$MASTER_ENV" ]; then
+    OLD_PASSWORD="$(grep -E '^DSA_PASSWORD=' "$MASTER_ENV" | tail -1 | cut -d= -f2-)"
+    OLD_PORT="$(grep -E '^DSA_LISTEN=' "$MASTER_ENV" | tail -1 | sed -E 's/^DSA_LISTEN=.*://' | grep -E '^[0-9]+$' || echo 8080)"
+fi
+OLD_MODE="host"
+if [ -f "$MASTER_DEPLOY" ]; then
+    OLD_MODE="$(grep -E '^NET_MODE=' "$MASTER_DEPLOY" | tail -1 | cut -d= -f2)"
+fi
+case "$OLD_MODE" in host|bridge) ;; *) OLD_MODE="host" ;; esac
+
+# ---------------- 计算新值（非法时回退旧值）
+PASSWORD="${wizard_password:-$OLD_PASSWORD}"
+
+PORT="${wizard_port:-$OLD_PORT}"
+case "$PORT" in ''|*[!0-9]*) PORT="$OLD_PORT" ;; esac
+if [ "$PORT" -lt 100 ] || [ "$PORT" -gt 65535 ] 2>/dev/null; then
+    PORT="$OLD_PORT"
+fi
+
+MODE="${wizard_net:-$OLD_MODE}"
+case "$MODE" in host|bridge) ;; *) MODE="$OLD_MODE" ;; esac
+
+# ---------------- 写入部署主副本 + 同步 .env
+{
+    echo "NET_MODE=$MODE"
+    echo "BIND_PORT=$PORT"
+} > "$MASTER_DEPLOY"
+chmod 600 "$MASTER_DEPLOY"
+
+if [ -d "$(dirname "$TARGET_DOTENV")" ]; then
+    {
+        echo "# 由安装向导同步；模式与端口说明见 SUBMISSION.md"
+        echo "COMPOSE_PROFILES=$MODE"
+        echo "BIND_PORT=$PORT"
+    } > "$TARGET_DOTENV"
+    chmod 644 "$TARGET_DOTENV"
+fi
+
+# ---------------- 写入运行参数主副本 + 同步 env/app.env
+{
+    echo "DSA_ALLOWED_CIDRS=${wizard_allowed_cidrs:-$DEFAULT_CIDRS}"
+    if [ "$MODE" = "bridge" ]; then
+        # bridge 模式下容器内固定监听 8080，宿主端口由 .env 的 BIND_PORT 映射
+        echo "DSA_LISTEN=0.0.0.0:8080"
+    else
+        echo "DSA_LISTEN=0.0.0.0:$PORT"
+    fi
+    echo "TZ=${wizard_tz:-Asia/Shanghai}"
+    [ -n "$PASSWORD" ] && echo "DSA_PASSWORD=$PASSWORD"
+    true
+} > "$MASTER_ENV"
+chmod 600 "$MASTER_ENV"
+
+if [ -d "$(dirname "$TARGET_ENV")" ]; then
+    cp "$MASTER_ENV" "$TARGET_ENV"
+    chmod 600 "$TARGET_ENV"
+fi
+
+# ---------------- 重建容器使新模式 / 新端口生效
+docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+(cd "${TRIM_APPDEST}/docker" && docker compose up -d) >/dev/null 2>&1 \
+    || docker restart "$CONTAINER" >/dev/null 2>&1 || true
+
+exit 0

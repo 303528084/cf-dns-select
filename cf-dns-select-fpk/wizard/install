@@ -1,0 +1,107 @@
+[
+  {
+    "stepTitle": "使用声明",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "此项目为局域网内的 DNS 服务实例（如 AdGuard Home）寻找当前网络环境响应最快的 Cloudflare 边缘节点，通过 DNS 服务实例提供的 DNS 重写功能，将局域网内相关请求解析到最快地址。\n项目地址：https://github.com/neon9809/cf-dns-select"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_agreement",
+        "label": "本人知晓 DNS 递归解析原理、了解 Cloudflare 边缘网络，清楚相关法律法规，承诺依法依规使用。",
+        "options": [
+          { "label": "我已阅读并同意上述声明", "value": "agree" },
+          { "label": "不同意（安装将被中止）", "value": "refuse" }
+        ],
+        "rules": [
+          { "required": true, "message": "请阅读并选择是否同意使用声明" }
+        ]
+      }
+    ]
+  },
+  {
+    "stepTitle": "网络模式",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "host 网络（推荐）：容器直接使用宿主网络栈，可获得真实 IPv4 + IPv6 测速环境。端口映射：容器运行在隔离的桥接网络中，仅暴露所选端口、兼容性更稳妥，但受 NAT 限制 IPv6 测速不可用。两种模式下都通过下方所选端口访问 Dashboard。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_net",
+        "label": "选择应用的网络模式",
+        "initValue": "host",
+        "options": [
+          { "label": "host 网络（推荐，支持 IPv6 测速）", "value": "host" },
+          { "label": "端口映射（无 IPv6 测速）", "value": "bridge" }
+        ],
+        "rules": [
+          { "required": true, "message": "请选择网络模式" }
+        ]
+      }
+    ]
+  },
+  {
+    "stepTitle": "访问安全与端口",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "Dashboard 仅允许白名单内网段访问，未配置白名单时应用会拒绝启动。静态页面与健康检查接口不受白名单限制。host 模式下服务直接监听宿主端口；安装时会自动检测端口占用，冲突将中止安装。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_allowed_cidrs",
+        "label": "允许访问的来源网段（CIDR，逗号分隔）",
+        "initValue": "192.168.0.0/16,10.0.0.0/8,172.16.0.0/12",
+        "rules": [
+          { "required": true, "message": "至少填写一个允许访问的网段" },
+          {
+            "pattern": "^\\d{1,3}(\\.\\d{1,3}){3}/\\d{1,2}(\\s*,\\s*\\d{1,3}(\\.\\d{1,3}){3}/\\d{1,2})*$",
+            "message": "请输入合法 CIDR 网段，多个用英文逗号分隔，例如 192.168.0.0/16"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_port",
+        "label": "Dashboard 访问端口（100-65535）",
+        "initValue": "8080",
+        "rules": [
+          { "required": true, "message": "请填写监听端口" },
+          {
+            "pattern": "^([1-9]\\d{2,3}|[1-5]\\d{4}|6[0-4]\\d{3}|65[0-4]\\d{2}|655[0-2]\\d|6553[0-5])$",
+            "message": "请输入 100-65535 之间的端口号"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "stepTitle": "登录与时区",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "登录密码留空时，应用首次启动会自动生成随机密码，并打印在应用日志中（docker logs cf-dns-select 可查看）。"
+      },
+      {
+        "type": "password",
+        "field": "wizard_password",
+        "label": "Dashboard 登录密码（建议不少于 8 位）"
+      },
+      {
+        "type": "select",
+        "field": "wizard_tz",
+        "label": "时区",
+        "initValue": "Asia/Shanghai",
+        "options": [
+          { "label": "北京时间 Asia/Shanghai", "value": "Asia/Shanghai" },
+          { "label": "Asia/Hong_Kong", "value": "Asia/Hong_Kong" },
+          { "label": "Asia/Taipei", "value": "Asia/Taipei" },
+          { "label": "Asia/Tokyo", "value": "Asia/Tokyo" },
+          { "label": "UTC", "value": "UTC" }
+        ]
+      }
+    ]
+  }
+]

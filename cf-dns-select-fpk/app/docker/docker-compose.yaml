@@ -1,0 +1,51 @@
+# 网络模式说明：
+#   两个 service 分别属于 host / bridge profile，由 compose 同目录 .env 中的
+#   COMPOSE_PROFILES 选择（安装向导同步），同一时刻只会创建其中一个容器，
+#   容器名统一为 cf-dns-select，便于日志查看与状态检查。
+
+services:
+  cf-dns-select:
+    profiles: ["host"]
+    image: ghcr.io/neon9809/cf-dns-select:0.3.0
+    container_name: cf-dns-select
+    restart: unless-stopped
+    # host 模式：直接继承宿主网络栈（IPv4/IPv6 测速需要），
+    # Dashboard 监听宿主端口 = 向导端口（写入 env/app.env 的 DSA_LISTEN）
+    network_mode: host
+    env_file:
+      - ${TRIM_APPDEST}/docker/env/app.env
+    environment:
+      DSA_CONFIG: /app/data/config.json
+      DSA_COLO_IP_DB: /app/data/colo_ip_db.json
+      DSA_NET_MODE: host
+    volumes:
+      - ${TRIM_PKGVAR}/data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cf-dns-select-bridge:
+    profiles: ["bridge"]
+    image: ghcr.io/neon9809/cf-dns-select:0.3.0
+    container_name: cf-dns-select
+    restart: unless-stopped
+    # bridge 模式：端口映射访问；受 NAT 限制，IPv6 测速不可用。
+    # 宿主机端口来自 .env 的 BIND_PORT（与向导端口一致），容器内固定 8080。
+    ports:
+      - "${BIND_PORT:-8080}:8080"
+    env_file:
+      - ${TRIM_APPDEST}/docker/env/app.env
+    environment:
+      DSA_LISTEN: 0.0.0.0:8080
+      DSA_NET_MODE: bridge
+      DSA_CONFIG: /app/data/config.json
+      DSA_COLO_IP_DB: /app/data/colo_ip_db.json
+    volumes:
+      - ${TRIM_PKGVAR}/data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

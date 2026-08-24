@@ -1,0 +1,7 @@
+{
+  "defaults": {
+    "run-as": "package"
+  },
+  "username": "cf-dns-select",
+  "groupname": "cf-dns-select"
+}

@@ -1,0 +1,111 @@
+#!/bin/bash
+# 安装完成后执行：
+#   1. 声明门禁：未同意使用声明则中止安装并给出可见错误；
+#   2. 校验网络模式与端口（100-65535），首次安装时检测端口占用；
+#   3. 生成部署主副本 ${TRIM_PKGETC}/deploy.conf 与运行参数主副本 app.env；
+#   4. 同步到 compose 引用的包内文件（.env 与 env/app.env）；
+#   5. 若安装流程已用默认模式拉起了容器而用户选择了其他模式，则重建容器。
+#
+# 说明：.env 与 env/app.env 均随包携带默认值（host 模式），因此无论
+#       本脚本是否已执行、应用中心在哪个阶段拉起 docker-project，
+#       都能得到确定的、可启动的配置。
+
+set -e
+
+CONTAINER="cf-dns-select"
+MASTER_ENV="${TRIM_PKGETC}/app.env"            # 运行参数主副本（传给容器）
+MASTER_DEPLOY="${TRIM_PKGETC}/deploy.conf"     # 部署参数主副本（模式/端口）
+TARGET_ENV="${TRIM_APPDEST}/docker/env/app.env"
+TARGET_DOTENV="${TRIM_APPDEST}/docker/.env"
+
+DEFAULT_CIDRS="192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
+
+fail() {
+    printf '%s\n' "$@" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+}
+
+# ------------------------------------------------------------------ 声明门禁
+if [ "${wizard_agreement:-}" != "agree" ]; then
+    fail "未同意使用声明，无法继续安装。" \
+         "本项目用于为局域网 DNS 服务实例优选 Cloudflare 边缘节点，" \
+         "请确认已阅读并同意安装向导中的使用声明后重试。" \
+         "项目地址：https://github.com/neon9809/cf-dns-select"
+fi
+
+# ---------------------------------------------------------------- 网络模式
+MODE="${wizard_net:-host}"
+case "$MODE" in
+    host|bridge) ;;
+    *) MODE="host" ;;
+esac
+
+# ---------------------------------------------------------------- 端口校验
+PORT="${wizard_port:-8080}"
+case "$PORT" in
+    ''|*[!0-9]*) fail "监听端口不合法: \"$PORT\"，请填写 100-65535 之间的数字。" ;;
+esac
+if [ "$PORT" -lt 100 ] || [ "$PORT" -gt 65535 ]; then
+    fail "监听端口 $PORT 超出范围（100-65535）。"
+fi
+
+port_busy() {
+    # bash 内建 /dev/tcp 探测，无需 nc/curl；能连上即视为被占用
+    (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null || return 1
+    exec 3<&- 3>&- 2>/dev/null || true
+    return 0
+}
+
+# ------------------------------------------- 生成主副本（升级时保留旧配置）
+if [ ! -f "$MASTER_DEPLOY" ]; then
+    mkdir -p "$(dirname "$MASTER_DEPLOY")"
+    {
+        echo "NET_MODE=$MODE"
+        echo "BIND_PORT=$PORT"
+    } > "$MASTER_DEPLOY"
+    chmod 600 "$MASTER_DEPLOY"
+
+    # 首次安装：此刻本应用尚未运行，若端口仍可连通说明被其他服务占用
+    if port_busy "$PORT"; then
+        rm -f "$MASTER_DEPLOY"
+        fail "端口 $PORT 已被其他服务占用，请回到安装向导更换端口后重试。" \
+             "可先执行 ss -lntp | grep :$PORT 查看占用进程。"
+    fi
+fi
+
+if [ ! -f "$MASTER_ENV" ]; then
+    mkdir -p "$(dirname "$MASTER_ENV")"
+    {
+        echo "DSA_ALLOWED_CIDRS=${wizard_allowed_cidrs:-$DEFAULT_CIDRS}"
+        echo "DSA_LISTEN=0.0.0.0:$PORT"
+        echo "TZ=${wizard_tz:-Asia/Shanghai}"
+        [ -n "${wizard_password:-}" ] && echo "DSA_PASSWORD=${wizard_password}"
+        true
+    } > "$MASTER_ENV"
+    chmod 600 "$MASTER_ENV"
+fi
+
+# --------------------------------------------------- 同步到 compose 引用路径
+mkdir -p "$(dirname "$TARGET_ENV")"
+cp "$MASTER_ENV" "$TARGET_ENV"
+chmod 600 "$TARGET_ENV"
+
+MODE_NOW="$(grep -E '^NET_MODE=' "$MASTER_DEPLOY" | tail -1 | cut -d= -f2)"
+BIND_NOW="$(grep -E '^BIND_PORT=' "$MASTER_DEPLOY" | tail -1 | cut -d= -f2)"
+{
+    echo "# 由安装向导同步；模式与端口说明见 SUBMISSION.md"
+    echo "COMPOSE_PROFILES=${MODE_NOW:-host}"
+    echo "BIND_PORT=${BIND_NOW:-8080}"
+} > "$TARGET_DOTENV"
+chmod 644 "$TARGET_DOTENV"
+
+# --------------------------------------------- 模式不一致时重建容器
+# 应用中心可能在回调前就以默认 host 模式拉起过容器；若用户选择了
+# 端口映射模式，这里删除旧容器并用正确 profile 重新拉起。
+cur_mode="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$CONTAINER" 2>/dev/null | sed -n 's/^DSA_NET_MODE=//p' | head -1)"
+if [ -n "$cur_mode" ] && [ "$cur_mode" != "$MODE_NOW" ]; then
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    (cd "${TRIM_APPDEST}/docker" && docker compose up -d) >/dev/null 2>&1 || true
+fi
+
+exit 0

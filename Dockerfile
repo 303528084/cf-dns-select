@@ -41,4 +41,4 @@ HEALTHCHECK --interval=60s --timeout=5s --start-period=10s \
     CMD wget -qO- http://127.0.0.1:8080/api/health >/dev/null 2>&1 || exit 1
 
 ENTRYPOINT ["cf-dns-select"]
-CMD ["-listen", "0.0.0.0:8080"]
+CMD []

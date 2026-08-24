@@ -1,0 +1,99 @@
+#!/bin/bash
+# fnOS 生命周期脚本：start / stop / status。
+# Docker 栈由应用中心根据 config/resource 中的 docker-project 声明启动和停止；
+# 本脚本负责保证部署/运行参数文件就位、清理与所选模式不一致的旧容器，并如实上报状态。
+
+CONTAINER="cf-dns-select"
+TARGET_ENV="${TRIM_APPDEST}/docker/env/app.env"    # compose env_file（随包携带）
+TARGET_DOTENV="${TRIM_APPDEST}/docker/.env"        # compose profiles 选择（随包携带）
+MASTER_ENV="${TRIM_PKGETC}/app.env"                # 运行参数主副本（升级保留）
+MASTER_DEPLOY="${TRIM_PKGETC}/deploy.conf"         # 部署参数主副本（模式/端口）
+OLD_ENV="${TRIM_PKGVAR}/env/app.env"               # v1.0.0 旧位置（迁移用）
+
+DEFAULT_CIDRS="192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
+DEFAULT_TZ="Asia/Shanghai"
+
+ensure_masters() {
+    # 部署主副本：默认 host 模式
+    if [ ! -f "$MASTER_DEPLOY" ]; then
+        mkdir -p "$(dirname "$MASTER_DEPLOY")"
+        {
+            echo "NET_MODE=${wizard_net:-host}"
+            echo "BIND_PORT=${wizard_port:-8080}"
+        } > "$MASTER_DEPLOY"
+        chmod 600 "$MASTER_DEPLOY"
+    fi
+    # 运行参数主副本：优先从 v1.0.0 旧位置迁移，其次写默认值
+    if [ ! -f "$MASTER_ENV" ]; then
+        mkdir -p "$(dirname "$MASTER_ENV")"
+        if [ -f "$OLD_ENV" ]; then
+            cp "$OLD_ENV" "$MASTER_ENV"
+        else
+            {
+                echo "DSA_ALLOWED_CIDRS=${wizard_allowed_cidrs:-$DEFAULT_CIDRS}"
+                echo "DSA_LISTEN=0.0.0.0:${wizard_port:-8080}"
+                echo "TZ=${wizard_tz:-$DEFAULT_TZ}"
+                [ -n "${wizard_password:-}" ] && echo "DSA_PASSWORD=${wizard_password}"
+                true
+            } > "$MASTER_ENV"
+        fi
+        chmod 600 "$MASTER_ENV"
+    fi
+}
+
+sync_to_target() {
+    MODE="$(grep -E '^NET_MODE=' "$MASTER_DEPLOY" 2>/dev/null | tail -1 | cut -d= -f2)"
+    BIND="$(grep -E '^BIND_PORT=' "$MASTER_DEPLOY" 2>/dev/null | tail -1 | cut -d= -f2)"
+    case "$MODE" in host|bridge) ;; *) MODE="host" ;; esac
+    case "$BIND" in ''|*[!0-9]*) BIND="8080" ;; esac
+
+    if [ -f "$MASTER_ENV" ] && [ -d "$(dirname "$TARGET_ENV")" ]; then
+        cp "$MASTER_ENV" "$TARGET_ENV"
+        chmod 600 "$TARGET_ENV"
+    fi
+    if [ -d "$(dirname "$TARGET_DOTENV")" ]; then
+        {
+            echo "# 由安装向导同步；模式与端口说明见 SUBMISSION.md"
+            echo "COMPOSE_PROFILES=$MODE"
+            echo "BIND_PORT=$BIND"
+        } > "$TARGET_DOTENV"
+        chmod 644 "$TARGET_DOTENV"
+    fi
+}
+
+# 若正在运行的容器与所选模式不一致（如安装流程先用默认 host 拉起），
+# 删除旧容器；应用中心的启动流程会用同步后的 .env 以正确模式重建。
+reconcile_mode() {
+    MODE="$(grep -E '^NET_MODE=' "$MASTER_DEPLOY" 2>/dev/null | tail -1 | cut -d= -f2)"
+    case "$MODE" in host|bridge) ;; *) MODE="host" ;; esac
+    cur_mode="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$CONTAINER" 2>/dev/null | sed -n 's/^DSA_NET_MODE=//p' | head -1)"
+    if [ -n "$cur_mode" ] && [ "$cur_mode" != "$MODE" ]; then
+        docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    fi
+}
+
+is_running() {
+    docker inspect "$CONTAINER" 2>/dev/null | grep -q '"Status": "running"'
+}
+
+case "$1" in
+start)
+    ensure_masters
+    sync_to_target
+    reconcile_mode
+    exit 0
+    ;;
+stop)
+    exit 0
+    ;;
+status)
+    if is_running; then
+        exit 0
+    fi
+    exit 3
+    ;;
+*)
+    echo "Unknown command: $1" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+    ;;
+esac

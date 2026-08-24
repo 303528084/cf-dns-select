@@ -1,55 +1,56 @@
-name: Docker Publish
+name: Docker Publish + FPK Release
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  FPK_DIR: cf-dns-select-fpk
+  FPK_OUT: dist/cf-dns-select.fpk
 
 jobs:
-  build:
+  build_and_push_image:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: 检出仓库
         uses: actions/checkout@v4
 
-      - name: Set up Node
+      - name: 安装 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: web/ui/package-lock.json
 
-      # 前端在原生 runner 上构建一次（产物与架构无关），
-      # 避免多架构构建时 QEMU 模拟执行 npm 极慢甚至卡死
-      - name: Build frontend
+      - name: 构建前端
         working-directory: web/ui
         run: |
           npm ci
           npm run build
 
-      - name: Set up QEMU
+      - name: 设置 QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up Docker Buildx
+      - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      - name: 登录 GHCR
+        if: startsWith(github.ref, 'refs/tags/')
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags / labels)
+      - name: 提取镜像元数据（tags / labels）
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -57,16 +58,114 @@ jobs:
           tags: |
             type=ref,event=tag
             type=semver,pattern={{version}}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-') }}
 
-      - name: Build and push
+      - name: 构建并推送镜像
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
-          push: true
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ github.ref_name }}
+
+  build_fpk:
+    needs: build_and_push_image
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 设置 Docker Buildx
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 校验 FPK 沙箱配置
+        run: node fpk-sandbox/bin/fpksb.js check "${FPK_DIR}"
+
+      - name: 校验已发布镜像存在
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME#v}"
+          docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}:${TAG}" >/dev/null
+
+      - name: 版本一致性检查（tag = manifest = compose image tags）
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME#v}"
+          VER="$(grep -E '^version[[:space:]]*=' "${FPK_DIR}/manifest" | head -1 | sed -E 's/^version[[:space:]]*=[[:space:]]*//' | tr -d '[:space:]')"
+
+          TAGS="$(
+            grep -E '^[[:space:]]*image:' "${FPK_DIR}/app/docker/docker-compose.yaml" \
+              | awk '{print $2}' \
+              | sed 's/.*://'
+          )"
+
+          if [ -z "$TAGS" ]; then
+            echo "::error::未在 docker-compose.yaml 中找到 image 字段"
+            exit 1
+          fi
+
+          UNIQ_COUNT="$(echo "$TAGS" | sort -u | wc -l | tr -d '[:space:]')"
+          if [ "$UNIQ_COUNT" != "1" ]; then
+            echo "::error::docker-compose.yaml 中存在多个不同的镜像标签，请统一后重新打标签"
+            echo "$TAGS"
+            exit 1
+          fi
+
+          IMGTAG="$(echo "$TAGS" | head -1)"
+
+          echo "tag=$TAG manifest=$VER image_tag=$IMGTAG"
+
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::git 标签 ($TAG) 与 manifest.version ($VER) 不一致"
+            exit 1
+          fi
+
+          if [ "$TAG" != "$IMGTAG" ]; then
+            echo "::error::compose 镜像标签 ($IMGTAG) 与 manifest.version ($VER) 不一致，请同步修改后重新打标签"
+            exit 1
+          fi
+
+      - name: 冒烟测试
+        run: bash fpk-sandbox/test/run.sh
+
+      - name: 构建 .fpk 并生成校验和
+        run: |
+          mkdir -p dist
+          node fpk-sandbox/bin/fpksb.js build "${FPK_DIR}" -o "${FPK_OUT}"
+          (cd dist && sha256sum cf-dns-select.fpk > SHA256SUMS.txt)
+          ls -l dist/
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: cf-dns-select-${{ github.ref_name }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: 附着到 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/cf-dns-select.fpk
+            dist/SHA256SUMS.txt

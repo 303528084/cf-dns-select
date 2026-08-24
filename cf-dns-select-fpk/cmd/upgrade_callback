@@ -1,0 +1,50 @@
+#!/bin/bash
+# 升级完成后执行：包内 target/docker/ 下的 .env 与 env/app.env 已被新包默认值覆盖，
+# 这里把用户配置主副本重新同步过去。
+# 兼容 v1.0.0：若运行参数主副本不存在，则从旧的 ${TRIM_PKGVAR}/env/app.env 迁移。
+
+set -e
+
+CONTAINER="cf-dns-select"
+MASTER_ENV="${TRIM_PKGETC}/app.env"
+MASTER_DEPLOY="${TRIM_PKGETC}/deploy.conf"
+TARGET_ENV="${TRIM_APPDEST}/docker/env/app.env"
+TARGET_DOTENV="${TRIM_APPDEST}/docker/.env"
+OLD_ENV="${TRIM_PKGVAR}/env/app.env"
+
+if [ ! -f "$MASTER_ENV" ] && [ -f "$OLD_ENV" ]; then
+    mkdir -p "$(dirname "$MASTER_ENV")"
+    cp "$OLD_ENV" "$MASTER_ENV"
+    chmod 600 "$MASTER_ENV"
+fi
+
+# 旧版本无 deploy.conf 时按 host 模式初始化（与历史行为一致）
+if [ ! -f "$MASTER_DEPLOY" ]; then
+    mkdir -p "$(dirname "$MASTER_DEPLOY")"
+    {
+        echo "NET_MODE=host"
+        echo "BIND_PORT=$(grep -E '^DSA_LISTEN=' "$MASTER_ENV" 2>/dev/null | tail -1 | sed -E 's/^DSA_LISTEN=.*://' | grep -E '^[0-9]+$' || echo 8080)"
+    } > "$MASTER_DEPLOY"
+    chmod 600 "$MASTER_DEPLOY"
+fi
+
+MODE="$(grep -E '^NET_MODE=' "$MASTER_DEPLOY" | tail -1 | cut -d= -f2)"
+BIND="$(grep -E '^BIND_PORT=' "$MASTER_DEPLOY" | tail -1 | cut -d= -f2)"
+case "$MODE" in host|bridge) ;; *) MODE="host" ;; esac
+case "$BIND" in ''|*[!0-9]*) BIND="8080" ;; esac
+
+mkdir -p "$(dirname "$TARGET_ENV")" "$(dirname "$TARGET_DOTENV")"
+
+if [ -f "$MASTER_ENV" ]; then
+    cp "$MASTER_ENV" "$TARGET_ENV"
+    chmod 600 "$TARGET_ENV"
+fi
+
+{
+    echo "# 由安装向导同步；模式与端口说明见 SUBMISSION.md"
+    echo "COMPOSE_PROFILES=$MODE"
+    echo "BIND_PORT=$BIND"
+} > "$TARGET_DOTENV"
+chmod 644 "$TARGET_DOTENV"
+
+exit 0

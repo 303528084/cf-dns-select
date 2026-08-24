@@ -1,0 +1,5 @@
+#!/bin/bash
+
+### install_init（cf-dns-select 沙箱无需额外处理）
+
+exit 0
